@@ -16,6 +16,9 @@
 // Needed to obtain the Navigation Controller
 #import "AppDelegate.h"
 
+#define errorOffset 40.0f
+#define distanceToCheckIfCollidingWall 40.0f
+
 #pragma mark - HelloWorldLayer
 
 // HelloWorldLayer implementation
@@ -46,8 +49,8 @@
   WallSprite *wallSprite = [WallSprite spriteWithFile:@"brick.png"];
   TiledSprite * tiledSprite = [[TiledSprite alloc] initWithSprite:wallSprite width:100 height:300];
   tiledSprite.position = ccp(400, 200);
-  tiledSprite.height = [NSNumber numberWithInt:100];
-  tiledSprite.width = [NSNumber numberWithInt:300];
+  tiledSprite.height = [NSNumber numberWithInt:300];
+  tiledSprite.width = [NSNumber numberWithInt:100];
   [self.tiledWallSpritesArray addObject:tiledSprite];
   [self addChild:tiledSprite];
 }
@@ -74,26 +77,9 @@
     [self addWallsOnScreen];
     [self addTouchSpritesOnScreen];
     self.touchEnabled = YES;
-    [self scheduleUpdate];
 
 	}
 	return self;
-}
-
-- (void)update:(ccTime)delta {
-  [self checkAndUpdateWallCollidingPropertyOfTouchSprites];
-}
-
-- (void)checkAndUpdateWallCollidingPropertyOfTouchSprites {
-  for (TouchSprite *touchSprite in self.touchSpritesArray) {
-    for (TiledSprite *tiledSprite in self.tiledWallSpritesArray) {
-      CGRect tiledRect = CGRectMake(tiledSprite.position.x, tiledSprite.position.y, [tiledSprite.width intValue], [tiledSprite.height intValue]);
-      if (CGRectIntersectsRect([touchSprite boundingBox], tiledRect)) {
-        touchSprite.isCollidingWithWall = YES;
-        break;
-      }
-    }
-  }
 }
 
 - (void)ccTouchesBegan:(NSSet *)touches withEvent:(UIEvent *)event {
@@ -123,9 +109,58 @@
   self.isTouchAllowedToMove = NO;
 }
 
+//              /*
+//
+//                       ___2____
+//                      |       |
+//                     1|       |3
+//                      |_______|
+//                          4
+//               */
+//
+//
+//              // if diff.x > 0 that means you are moving towards the wall provided you had collided with face 1
+//              // if diff.x < 0 that means you are moving towards the wall provided you had collided with face 3
+//              // if diff.y < 0 that means you are moving towards the wall provided you had collided with face 2
+//              // if diff.y > 0 that means you are moving towards the wall provided you had collided with face 4
+//
+
+
 -(void)ccTouchesMoved:(NSSet *)touches withEvent:(UIEvent *)event {
   
   if (self.isTouchAllowedToMove) {
+    for (UITouch *touch in touches) {
+      CGPoint touchLocation = [[CCDirector sharedDirector] convertToGL:[touch locationInView:touch.view]];
+      for (TouchSprite *touchSprite in self.touchSpritesArray) {
+        if (touchSprite.tag == touch.hash) {
+          for (TiledSprite *tiledSprite in self.tiledWallSpritesArray) {
+            CGRect tiledRect = CGRectMake(tiledSprite.position.x, tiledSprite.position.y, [tiledSprite.width intValue], [tiledSprite.height intValue]);
+            if (CGRectIntersectsRect([touchSprite boundingBox], tiledRect)) {
+              touchSprite.isCollidingWithWall = YES;
+            } else {
+              if (touchSprite.isCollidingWithWall == NO) {
+                break;
+              } else {
+                int touchSpriteHeight = [touchSprite contentSize].height;
+                int touchSpriteWidth = [touchSprite contentSize].width;
+                CGRect touchSpriteRect = CGRectMake(touchLocation.x - touchSpriteWidth/2, touchLocation.y - touchSpriteHeight/2, touchSpriteWidth, touchSpriteHeight);
+                if (CGRectIntersectsRect(tiledRect, touchSpriteRect)) {
+                  touchSprite.isCollidingWithWall = YES;
+                } else {
+                  if (ccpDistance(touchLocation, touchSprite.position) >= distanceToCheckIfCollidingWall) {
+                    touchSprite.isCollidingWithWall = YES;
+                  } else {
+                    touchSprite.isCollidingWithWall = NO;
+                    
+                  }
+                }
+              }
+            }
+          }
+          break;
+        }
+      }
+    }
     
     for (UITouch *touch in touches) {
       CGPoint touchLocation = [[CCDirector sharedDirector] convertToGL:[touch locationInView:touch.view]];
@@ -134,27 +169,45 @@
           if (!touchSprite.isCollidingWithWall) {
             touchSprite.position = touchLocation;
           } else {
-            if (CGPointEqualToPoint(touchLocation, touchSprite.position)) {
+            CGPoint previousLocation = [[CCDirector sharedDirector] convertToGL:[touch previousLocationInView:touch.view]];
+            CGPoint diff = ccpSub(touchLocation, previousLocation);
+            
+            for (TiledSprite *tiledSprite in self.tiledWallSpritesArray) {
+              CGRect tiledRect = CGRectMake(tiledSprite.position.x, tiledSprite.position.y, [tiledSprite.width intValue], [tiledSprite.height intValue]);
+              CGRect intersectionRect = CGRectIntersection(tiledRect, [touchSprite boundingBox]);
               
-            } else {
-              CGPoint previousLocation = [[CCDirector sharedDirector] convertToGL:[touch previousLocationInView:touch.view]];
-              CGPoint diff = ccpSub(touchLocation, previousLocation);
-              /*
-
-                       ___2____
-                      |       |
-                     1|       |3
-                      |_______|
-                          4
-               */
-
-
-              // if diff.x > 0 that means you are moving towards the wall provided you had collided with face 1
-              // if diff.x < 0 that means you are moving towards the wall provided you had collided with face 3
-              // if diff.y < 0 that means you are moving towards the wall provided you had collided with face 2
-              // if diff.y > 0 that means you are moving towards the wall provided you had collided with face 4
-
-              CGPoint pointToAdd = CGPointMake(0, diff.y);
+              //side 4
+              CGPoint pointToAdd;
+              if ((touchSprite.position.y + touchSprite.contentSize.height/2) < tiledRect.origin.y + errorOffset) {
+                int yDiff = diff.y > 0 ? 0 : diff.y;
+                if (CGRectIsEmpty(intersectionRect)) {
+                  yDiff = 0;
+                }
+                pointToAdd = CGPointMake(diff.x, yDiff);
+                
+                //side 2
+              } else if ((touchSprite.position.y - touchSprite.contentSize.height/2) > tiledRect.origin.y + tiledRect.size.height - errorOffset) {
+                int yDiff = diff.y < 0 ? 0 : diff.y;
+                if (CGRectIsEmpty(intersectionRect)) {
+                  yDiff = 0;
+                }
+                pointToAdd = CGPointMake(diff.x, yDiff);
+                //side 1
+              } else if ((touchSprite.position.x + touchSprite.contentSize.width/2) < tiledRect.origin.x + errorOffset) {
+                int xDiff = diff.x > 0 ? 0 : diff.x;
+                if (CGRectIsEmpty(intersectionRect)) {
+                  xDiff = 0;
+                }
+                pointToAdd = CGPointMake(xDiff, diff.y);
+                //side 3
+              } else {
+                int xDiff = diff.x < 0 ? 0 : diff.x;
+                if (CGRectIsEmpty(intersectionRect)) {
+                  xDiff = 0;
+                }
+                pointToAdd = CGPointMake(xDiff, diff.y);
+              }
+              
               touchSprite.position = ccpAdd(touchSprite.position, pointToAdd);
             }
           }
